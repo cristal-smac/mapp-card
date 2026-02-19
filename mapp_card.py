@@ -73,6 +73,10 @@ class Joueur(ABC):
         self.main: List[Card] = []
         self.score = 0  # Attribut pour accumuler la récompense
 
+    def set_team(self, new_team: int):
+        """Permet de changer l'équipe dynamiquement (ex: Tarot)."""
+        self.team = new_team
+
         # La méthode décrite dans l'article : celle qui "respecte les rules"
         # A VERIFIER DANS LE DETAIL ... PAS CERTAIN QUE TOUT SOIT CORRECT
     def filter_legal_cards(self, trick: List[Tuple['Joueur', Card]], rules: Rules, trump_suit: int) -> List[Card]:
@@ -143,16 +147,24 @@ def determiner_vainqueur(pli: List[Tuple[Joueur, Card]], trump_suit: int) -> int
         followed_suit = [(i, t[1]) for i, t in enumerate(pli) if t[1].suit == suit_led]
         return max(followed_suit, key=lambda x: x[1].value)[0]
 
-
 def setup_players(rules: Rules, use_human=False) -> List[Joueur]:
-    """Crée la liste des joueurs (objets IA ou Humain)."""
     players = []
     for i in range(rules.N):
+        # Par défaut, on peut dire que l'équipe est l'indice du joueur
+        # Si epsilon=False (équipe fixe), on écrasera cela juste après
+        initial_team = i 
+        
         if i == 0 and use_human:
-            player = JoueurHumain(nom=f"Humain_{i}", team=(i % 2))
+            player = JoueurHumain(nom=f"Humain_{i}", team=initial_team)
         else:
-            player = JoueurIA(nom=f"AI_{i}", team=(i % 2))
+            player = JoueurIA(nom=f"AI_{i}", team=initial_team)
         players.append(player)
+    
+    # CAS 1 : Équipes fixes (Belote, Bridge...)
+    if not rules.epsilon:
+        for i, p in enumerate(players):
+            p.set_team(i % 2) # On force le 0-2 et 1-3
+            
     return players
 
 
@@ -167,6 +179,23 @@ def deal_cards(rules: Rules, players: List[Joueur]):
         end = start + cards_per_player
         player.main = deck[start:end]
 
+def determiner_equipes_dynamiques(rules: Rules, joueurs: List[Joueur], carte_appelee: Card, preneur: Joueur):
+    """
+    Réorganise les équipes en fonction d'une carte appelée (Règle epsilon=True).
+    """
+    print(f"\n--- Phase d'Appel : Le preneur {preneur.nom} appelle le {carte_appelee} ---")
+    
+    for j in joueurs:
+        # Si le joueur possède la carte dans sa main
+        # On compare la valeur et la couleur
+        if any(c.value == carte_appelee.value and c.suit == carte_appelee.suit for c in j.main):
+            j.set_team(preneur.team)
+            print(f"INFO : {j.nom} est identifié comme le partenaire (détient la carte appelée).")
+            return j # On retourne le partenaire trouvé
+            
+    print("INFO : Le preneur s'est appelé lui-même (jeu en solitaire).")
+    return preneur
+
 
 
 def simulate_game(rules: Rules, use_human=False):
@@ -174,7 +203,14 @@ def simulate_game(rules: Rules, use_human=False):
     joueurs = setup_players(rules, use_human) 
     deal_cards(rules, joueurs)
 
-    # Si atout fixe, on prend la couleur 1
+    # 2. Gestion de l'équipe dynamique (Tarot / Epsilon=True)
+    if rules.epsilon:
+        # Exemple : Le joueur 0 est le preneur et appelle le Roi de Coeur (V=13, C=1)
+        # Dans un vrai jeu, cela viendrait d'une phase d'enchères.
+        roi_coeur = Card(suit=1, value=13)
+        determiner_equipes_dynamiques(rules, joueurs, roi_coeur, joueurs[0])
+
+    # 3. Choix de l'atout    # Si atout fixe, on prend la couleur 1
     # A REVOIR (je ne suis pas certain, revoir les regles des jeux pour les atouts dynamiques)
     trump_suit = 1 if not rules.alpha else random.randint(1, rules.C)
     
@@ -182,7 +218,7 @@ def simulate_game(rules: Rules, use_human=False):
 
     entameur_index = 0 
     
-    # 2. Boucle de jeu
+    # 4. Boucle de jeu
     # On joue autant de plis qu'il y a de cartes par joueur
     while len(joueurs[0].main) > 0:
         pli_actuel = []
@@ -207,7 +243,7 @@ def simulate_game(rules: Rules, use_human=False):
         
         entameur_index = joueurs.index(vainqueur)
 
-    # 3. Résultat final
+    # 5. Résultat final
     print("\n" + "="*30)
     print("      TABLEAU DES SCORES")
     print("="*30)
