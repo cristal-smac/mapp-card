@@ -25,6 +25,10 @@ from typing import List, Tuple           # permet d'indiquer les types de donné
 # TRADUCTION (voir source LaTex)
 # Pli -> trick
 # couper -> to trump
+# atout -> trump
+# couleur -> suit
+# main -> hand
+# entameur -> leader
 
 
 
@@ -32,15 +36,16 @@ from typing import List, Tuple           # permet d'indiquer les types de donné
 
 @dataclass
 class Rules:
-    gamma: bool = False  # Obligation de fournir la couleur
+    # AC : on suppose qu'on fournit la couleur demandée, si on en a
+    gamma: bool = False  # Obligation de monter sur la couleur demandée (pas seulement de fournir la couleur)
     kappa: bool = True   # Obligation de couper
     mu: bool = True      # Obligation de surcouper
     alpha: bool = True   # Atout dynamique
     epsilon: bool = False # Équipe fixe (0) ou dynamique (1)
     
-    C: int = 4
-    V: int = 8
-    N: int = 4
+    S: int = 4 # nombre de couleurs
+    V: int = 8 # nombre de valeurs
+    N: int = 4 # nombre de joueurs
 
 @dataclass
 class Card:
@@ -58,19 +63,17 @@ class Card:
 # --- Constantes Globales (Presets) ---
 # On les définit après les classes pour pouvoir instancier Rules
 
-BELOTE_RULES = Rules(gamma=False, kappa=True, mu=True, alpha=True, epsilon=False, V=8, C=4, N=4)
-BRIDGE_RULES = Rules(gamma=True, kappa=False, mu=False, alpha=True, epsilon=False, V=13, C=4, N=4)
-TAROT_RULES  = Rules(gamma=True, kappa=True, mu=True, alpha=False, epsilon=True, V=14, C=4, N=4)
-
-
+BELOTE_RULES = Rules(gamma=False, kappa=True, mu=True, alpha=True, epsilon=False, V=8, S=4, N=4)
+BRIDGE_RULES = Rules(gamma=True, kappa=False, mu=False, alpha=True, epsilon=False, V=13, S=4, N=4)
+TAROT_RULES  = Rules(gamma=True, kappa=True, mu=True, alpha=False, epsilon=True, V=14, S=4, N=4) # AC : pourquoi pas S=5 et N=5?
 
 # --- Classes des Joueurs ---
 
-class Joueur(ABC):
-    def __init__(self, nom: str, team: int):
-        self.nom = nom
+class Player(ABC):
+    def __init__(self, name: str, team: int):
+        self.name = name
         self.team = team
-        self.main: List[Card] = []
+        self.hand: List[Card] = []
         self.score = 0  # Attribut pour accumuler la récompense
 
     def set_team(self, new_team: int):
@@ -79,35 +82,41 @@ class Joueur(ABC):
 
         # La méthode décrite dans l'article : celle qui "respecte les rules"
         # A VERIFIER DANS LE DETAIL ... PAS CERTAIN QUE TOUT SOIT CORRECT
-    def filter_legal_cards(self, trick: List[Tuple['Joueur', Card]], rules: Rules, trump_suit: int) -> List[Card]:
-        if not trick: return self.main[:]
-        suit_led = trick[0][1].suit
+        # trick : ce que les autres joueurs ont déjà joué
+        # rules : the rules you have to respect
+        # trump_suit : couleur de l'atout
+    def filter_legal_cards(self, trick: List[Tuple['Player', Card]], rules: Rules, trump_suit: int) -> List[Card]:
+        if not trick: return self.hand[:] # personne n'a joué avant
+        suit_led = trick[0][1].suit # couleur de la carte jouée par le 1er joueur
         
         # Référence de la carte la plus forte pour monter/couper
-        trick_cards = [t[1] for t in trick]
-        trumps_in_trick = [c for c in trick_cards if c.suit == trump_suit]
+        trick_cards = [t[1] for t in trick] # les cartes jouées par les autres
+        trumps_in_trick = [c for c in trick_cards if c.suit == trump_suit] # les atouts joués par les autres
         
-        if trumps_in_trick:
-            highest_ref = max(trumps_in_trick, key=lambda x: x.value)
+        if trumps_in_trick: # un joueur précédent a joué de l'atout
+            highest_ref = max(trumps_in_trick, key=lambda x: x.value) # valeur du plus grand atout joué
         else:
-            highest_ref = max([c for c in trick_cards if c.suit == suit_led], key=lambda x: x.value)
+            highest_ref = max([c for c in trick_cards if c.suit == suit_led], key=lambda x: x.value) # valeur de la plus grande carte de la couleur demandée
 
-        cards_in_suit = [c for c in self.main if c.suit == suit_led]
-        trumps_in_hand = [c for c in self.main if c.suit == trump_suit]
+        cards_in_suit = [c for c in self.hand if c.suit == suit_led] # mes cartes de la couleur demandée
+        trumps_in_hand = [c for c in self.hand if c.suit == trump_suit] # mes atouts de la couleur demandée
+        # Remarque : si le 1er joueur a joué de l'atout, alors cards_in_suit et trumps_in_hand contiennent les mêmes cartes.
 
         if cards_in_suit:
             res = cards_in_suit
-            if rules.gamma:
+            if rules.gamma or (suit_led == trump_suit and rules.mu) : # obligation de monter (AC : ajout 2nde condition)
                 higher = [c for c in cards_in_suit if c.value > highest_ref.value]
                 if higher: res = higher
             return res
-        elif trumps_in_hand and rules.kappa:
+        # sinon, est-ce que j'ai de l'atout ?
+        elif trumps_in_hand and rules.kappa: # Obligation de couper
             res = trumps_in_hand
-            if rules.mu and trumps_in_trick:
+            if rules.mu and trumps_in_trick: # Obligation de surcouper (AC : ici on ne s'intéresse pas au partenaire ?)
                 higher_t = [c for c in trumps_in_hand if c.value > highest_ref.value]
                 if higher_t: res = higher_t
             return res
-        return self.main[:]
+        # si on n'a pas appliqué de filtre
+        return self.hand[:] # copie de self.hand
 
     @abstractmethod
     # Methode restant à implémenter.
@@ -116,38 +125,40 @@ class Joueur(ABC):
 
 
     
-class JoueurIA(Joueur):
+class Random_Player(Player):
     def decide(self, legal_cards: List[Card]):
+        # on choisit 1 carte aléatoirement parmi celles qui respectent les règles
         chosen = random.choice(legal_cards)
-        self.main.remove(chosen)
+        self.hand.remove(chosen)
         return chosen
 
 
-class JoueurHumain(Joueur):
+class Human_Player(Player):
     def decide(self, legal_cards: List[Card]):
-        print(f"\n[VOTRE SCORE : {self.score}] - [VOTRE MAIN] : {self.main}")
+        print(f"\n[VOTRE SCORE : {self.score}] - [VOTRE MAIN] : {self.hand}")
+        # on propose les cartes qui respectent les règles
         for i, c in enumerate(legal_cards): print(f"{i}: {c} ({c.get_points()} pts)")
         while True:
             try:
                 idx = int(input(f"Jouez une carte (0-{len(legal_cards)-1}) : "))
                 chosen = legal_cards[idx]
-                self.main.remove(chosen)
+                self.hand.remove(chosen)
                 return chosen
             except: print("Choix invalide.")
 
 
 # --- Logique de Jeu ---
 
-def determiner_vainqueur(pli: List[Tuple[Joueur, Card]], trump_suit: int) -> int:
-    suit_led = pli[0][1].suit
-    trumps = [(i, t[1]) for i, t in enumerate(pli) if t[1].suit == trump_suit]
+def determine_winner(trick: List[Tuple[Player, Card]], trump_suit: int) -> int:
+    suit_led = trick[0][1].suit # couleur de la 1ère carte jouée
+    trumps = [(i, t[1]) for i, t in enumerate(trick) if t[1].suit == trump_suit]
     if trumps:
-        return max(trumps, key=lambda x: x[1].value)[0]
+        return max(trumps, key=lambda x: x[1].value)[0] # Indice i, c'est le ième joueur dans ce tour qui a mis le meilleur atout (i n'est pas le nom du joueur)
     else:
-        followed_suit = [(i, t[1]) for i, t in enumerate(pli) if t[1].suit == suit_led]
-        return max(followed_suit, key=lambda x: x[1].value)[0]
+        followed_suit = [(i, t[1]) for i, t in enumerate(trick) if t[1].suit == suit_led] # idem
+        return max(followed_suit, key=lambda x: x[1].value)[0] # indice du joueur qui a mis la meilleure carte de la couleur demandée
 
-def setup_players(rules: Rules, use_human=False) -> List[Joueur]:
+def setup_players(rules: Rules, use_human=False) -> List[Player]:
     players = []
     for i in range(rules.N):
         # Par défaut, on peut dire que l'équipe est l'indice du joueur
@@ -155,9 +166,9 @@ def setup_players(rules: Rules, use_human=False) -> List[Joueur]:
         initial_team = i 
         
         if i == 0 and use_human:
-            player = JoueurHumain(nom=f"Humain_{i}", team=initial_team)
+            player = Human_Player(name=f"Humain_{i}", team=initial_team)
         else:
-            player = JoueurIA(nom=f"AI_{i}", team=initial_team)
+            player = Random_Player(name=f"Ordi_{i}", team=initial_team)
         players.append(player)
     
     # CAS 1 : Équipes fixes (Belote, Bridge...)
@@ -168,88 +179,93 @@ def setup_players(rules: Rules, use_human=False) -> List[Joueur]:
     return players
 
 
-def deal_cards(rules: Rules, players: List[Joueur]):
+# pour simplifier, on suppose que le nb de cartes est divisible par le nombre de joueurs
+def deal_cards(rules: Rules, players: List[Player]):
     """Distribue l'intégralité du deck aux joueurs."""
-    deck = [Card(suit=c, value=v) for c in range(1, rules.C + 1) for v in range(1, rules.V + 1)]
+    # deck = produit cartésien Couleur * Valeur
+    deck = [Card(suit=s, value=v) for s in range(1, rules.S + 1) for v in range(1, rules.V + 1)]
+    # on mélange
     random.shuffle(deck)
     
     cards_per_player = len(deck) // rules.N
     for i, player in enumerate(players):
         start = i * cards_per_player
         end = start + cards_per_player
-        player.main = deck[start:end]
+        player.hand = deck[start:end]
 
-def determiner_equipes_dynamiques(rules: Rules, joueurs: List[Joueur], carte_appelee: Card, preneur: Joueur):
+def determine_dynamic_teams(rules: Rules, players: List[Player], called_card: Card, taker: Player):
     """
     Réorganise les équipes en fonction d'une carte appelée (Règle epsilon=True).
     """
-    print(f"\n--- Phase d'Appel : Le preneur {preneur.nom} appelle le {carte_appelee} ---")
-    
-    for j in joueurs:
+    print(f"\n--- Phase d'Appel : Le preneur {taker.name} appelle le {called_card} ---")
+
+    # Pour l'instant, chaque joueur i est dans l'équipe i
+    # Si on trouve un joueur qui a la carte appelée, il prendra le numero d'équipe du preneur.
+    for j in players:
         # Si le joueur possède la carte dans sa main
         # On compare la valeur et la couleur
-        if any(c.value == carte_appelee.value and c.suit == carte_appelee.suit for c in j.main):
-            j.set_team(preneur.team)
-            print(f"INFO : {j.nom} est identifié comme le partenaire (détient la carte appelée).")
+        if any(c.value == called_card.value and c.suit == called_card.suit for c in j.hand):
+            j.set_team(taker.team)
+            print(f"INFO : {j.name} est identifié comme le partenaire (détient la carte appelée).")
             return j # On retourne le partenaire trouvé
             
     print("INFO : Le preneur s'est appelé lui-même (jeu en solitaire).")
-    return preneur
+    return taker
 
 
 
 def simulate_game(rules: Rules, use_human=False):
     # 1. Initialisation
-    joueurs = setup_players(rules, use_human) 
-    deal_cards(rules, joueurs)
+    players = setup_players(rules, use_human) # par défaut, équipe des joueurs pairs et des joueurs impairs
+    deal_cards(rules, players) # on distribue les cartes
 
     # 2. Gestion de l'équipe dynamique (Tarot / Epsilon=True)
     if rules.epsilon:
         # Exemple : Le joueur 0 est le preneur et appelle le Roi de Coeur (V=13, C=1)
         # Dans un vrai jeu, cela viendrait d'une phase d'enchères.
-        roi_coeur = Card(suit=1, value=13)
-        determiner_equipes_dynamiques(rules, joueurs, roi_coeur, joueurs[0])
+        king_hearts = Card(suit=1, value=13)
+        determine_dynamic_teams(rules, players, king_hearts, players[0])
 
-    # 3. Choix de l'atout    # Si atout fixe, on prend la couleur 1
+    # 3. Choix de l'atout    # Si atout fixe, on prend la couleur 0 -- AC : j'ai remplacé 1 par 0 ici
     # A REVOIR (je ne suis pas certain, revoir les regles des jeux pour les atouts dynamiques)
-    trump_suit = 1 if not rules.alpha else random.randint(1, rules.C)
+    trump_suit = 0 if not rules.alpha else random.randint(0, rules.S)
     
     print(f"--- DÉBUT DE LA PARTIE (Atout : couleur {trump_suit}) ---")
 
-    entameur_index = 0 
+    leader_index = 0
     
     # 4. Boucle de jeu
     # On joue autant de plis qu'il y a de cartes par joueur
-    while len(joueurs[0].main) > 0:
-        pli_actuel = []
+    while len(players[0].hand) > 0:
+        current_trick = []
         # L'ordre change à chaque pli selon l'entameur
-        ordre = [joueurs[(entameur_index + i) % rules.N] for i in range(rules.N)]
+        ordered_players = [players[(leader_index + i) % rules.N] for i in range(rules.N)]
 
         # Pour chaque joueur dans l'ordre du pli
-        for j in ordre:
-            legales = j.filter_legal_cards(pli_actuel, rules, trump_suit)
-            carte = j.decide(legales)
-            pli_actuel.append((j, carte))
-            print(f"{j.nom} joue {carte}")
+        for j in ordered_players:
+            legals = j.filter_legal_cards(current_trick, rules, trump_suit)
+            card = j.decide(legals)
+            current_trick.append((j, card))
+            print(f"{j.name} joue {card}")
 
-        # Calcul des points du pli
-        idx_v = determiner_vainqueur(pli_actuel, trump_suit)
-        vainqueur = pli_actuel[idx_v][0]
-        points_du_pli = sum(c.get_points() for _, c in pli_actuel)
+        # Détermination du gagnant et Calcul des points du pli
+        idx_v = determine_winner(current_trick, trump_suit)
+        winner = current_trick[idx_v][0]
+        trick_value = sum(c.get_points() for _, c in current_trick)
         
         # Attribution de la récompense
-        vainqueur.score += points_du_pli
-        print(f"*** {vainqueur.nom} remporte le pli (+{points_du_pli} pts) ***\n")
+        winner.score += trick_value
+        print(f"*** {winner.name} remporte le pli (+{trick_value} pts) ***\n")
         
-        entameur_index = joueurs.index(vainqueur)
+        leader_index = players.index(winner)
 
     # 5. Résultat final
     print("\n" + "="*30)
     print("      TABLEAU DES SCORES")
     print("="*30)
-    joueurs_classes = sorted(joueurs, key=lambda x: x.score, reverse=True)
-    for j in joueurs_classes:
-        print(f"{j.nom.ljust(15)} : {j.score} points")
+    ranking = sorted(players, key=lambda x: x.score, reverse=True)
+    for j in ranking:
+        print(f"{j.name.ljust(15)} : {j.score} points")
     print("="*30)
 
 
