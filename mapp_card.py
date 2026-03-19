@@ -94,9 +94,12 @@ class Player(ABC):
         trumps_in_trick = [c for c in trick_cards if c.suit == trump_suit] # les atouts joués par les autres
         
         if trumps_in_trick: # un joueur précédent a joué de l'atout
-            highest_ref = max(trumps_in_trick, key=lambda x: x.value) # valeur du plus grand atout joué
+            highest_ref = max(trumps_in_trick, key=lambda x: x.value)  # valeur du plus grand atout joué
         else:
-            highest_ref = max([c for c in trick_cards if c.suit == suit_led], key=lambda x: x.value) # valeur de la plus grande carte de la couleur demandée
+            # valeur de la plus grande carte de la couleur demandée
+            # Attention au cas où aucun joueur précédent n'a joué cette couleur, dans ce cas pas de highest_ref
+            followed = [c for c in trick_cards if c.suit == suit_led]
+            highest_ref = max(followed, key=lambda x: x.value) if followed else None            
 
         cards_in_suit = [c for c in self.hand if c.suit == suit_led] # mes cartes de la couleur demandée
         trumps_in_hand = [c for c in self.hand if c.suit == trump_suit] # mes atouts de la couleur demandée
@@ -104,16 +107,20 @@ class Player(ABC):
 
         if cards_in_suit:
             res = cards_in_suit
-            if rules.gamma or (suit_led == trump_suit and rules.mu) : # obligation de monter (AC : ajout 2nde condition)
-                higher = [c for c in cards_in_suit if c.value > highest_ref.value]
-                if higher: res = higher
+            # obligation de monter (AC : ajout 2nde condition)
+            if rules.gamma or (suit_led == trump_suit and rules.mu) : 
+                if highest_ref is not None:
+                    higher = [c for c in cards_in_suit if c.value > highest_ref.value]
+                    if higher: res = higher
             return res
         # sinon, est-ce que j'ai de l'atout ?
         elif trumps_in_hand and rules.kappa: # Obligation de couper
             res = trumps_in_hand
-            if rules.mu and trumps_in_trick: # Obligation de surcouper (AC : ici on ne s'intéresse pas au partenaire ?)
-                higher_t = [c for c in trumps_in_hand if c.value > highest_ref.value]
-                if higher_t: res = higher_t
+            # Obligation de surcouper (AC : ici on ne s'intéresse pas au partenaire ?)
+            if rules.mu and trumps_in_trick:
+                if highest_ref is not None:
+                    higher_t = [c for c in trumps_in_hand if c.value > highest_ref.value]
+                    if higher_t: res = higher_t
             return res
         # si on n'a pas appliqué de filtre
         return self.hand[:] # copie de self.hand
@@ -228,7 +235,7 @@ def simulate_game(rules: Rules, use_human=False):
 
     # 3. Choix de l'atout    # Si atout fixe, on prend la couleur 0 -- AC : j'ai remplacé 1 par 0 ici
     # A REVOIR (je ne suis pas certain, revoir les regles des jeux pour les atouts dynamiques)
-    trump_suit = 0 if not rules.alpha else random.randint(0, rules.S)
+    trump_suit = 0 if not rules.alpha else random.randint(1, rules.S)
     
     print(f"--- DÉBUT DE LA PARTIE (Atout : couleur {trump_suit}) ---")
 
