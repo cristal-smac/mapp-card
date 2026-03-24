@@ -116,13 +116,16 @@ class Player(ABC):
         # sinon, est-ce que j'ai de l'atout ?
         elif trumps_in_hand and rules.kappa: # Obligation de couper
             res = trumps_in_hand
-            # Obligation de surcouper
+
+            # On anticipe l'obligation de surcouper, est-ce qu'on a déjà joué un atout ?
+            previous_trumps = [(p, c) for p, c in trick if c.suit == trump_suit]
+            if previous_trumps:
             # Vérifier si c'est un adversaire (et non le partenaire) qui détient le meilleur atout
-            cutter = max(
-                [(p, c) for p, c in trick if c.suit == trump_suit],
-                key=lambda x: x[1].value
-            )
-            adversary_is_winning = cutter[0].team != self.team
+                cutter = max(
+                    [(p, c) for p, c in trick if c.suit == trump_suit],
+                    key=lambda x: x[1].value
+                )
+                adversary_is_winning = cutter[0].team != self.team
 
             if rules.mu and trumps_in_trick and adversary_is_winning:
                 higher_t = [c for c in trumps_in_hand if c.value > highest_ref.value]
